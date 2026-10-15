@@ -1,13 +1,4 @@
-# Archivos de credenciales y secretos (NUNCA subir a GitHub)
-client_secrets.json
-authorized_user.json
 .env
-
-# Cache de Python
+client_secrets.json
 __pycache__/
-*.pyc
-
-# Entornos virtuales
-.venv/
-venv/
-ENV/
+sitio-web-info/

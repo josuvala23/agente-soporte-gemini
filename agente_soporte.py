@@ -4,30 +4,23 @@ import sys
 import time
 import schedule
 import gspread
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 
 # ==========================================
 # CONFIGURACIÓN DEL AGENTE
 # ==========================================
+# Paso 1.1: Cargar variables de entorno desde el archivo .env si existe
+load_dotenv()
+
 ARCHIVO_CREDENCIALES = "client_secrets.json"
 NOMBRE_HOJA = "Respuestas de Quejas (Base de Datos)"
 
-# Función auxiliar para cargar variables desde .env si existe
-def cargar_env():
-    ruta_env = os.path.join(os.path.dirname(__file__), ".env")
-    if os.path.exists(ruta_env):
-        with open(ruta_env, "r", encoding="utf-8") as f:
-            for linea in f:
-                linea = linea.strip()
-                if linea and not linea.startswith("#") and "=" in linea:
-                    clave, valor = linea.split("=", 1)
-                    os.environ.setdefault(clave.strip(), valor.strip().strip('"').strip("'"))
-
-cargar_env()
-
-# Clave de Gemini (leída de forma segura desde .env o variable de entorno)
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "TU_API_KEY_AQUI")
+# Paso 1.1: Leer la clave desde la variable de entorno GEMINI_API_KEY
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "TU_API_KEY_AQUI")
 
 INTERVALO_MINUTOS = 15
 
@@ -46,7 +39,32 @@ cliente_gemini = None
 def conectar_sheets():
     """Autentica con OAuth 2.0 y abre la primera hoja de cálculo de Google Sheets."""
     try:
-        # Autenticación con OAuth 2.0 usando el archivo de credenciales descargado
+        # Paso 1.2: Iniciar sesión sin navegador si existe GOOGLE_TOKEN_JSON en el entorno
+        token_env = os.getenv("GOOGLE_TOKEN_JSON")
+        if token_env:
+            info = json.loads(token_env)
+            scopes = [
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ]
+            creds = Credentials.from_authorized_user_info(info, scopes)
+            creds.refresh(Request())
+            gc = gspread.authorize(creds)
+            try:
+                hoja_calculo = gc.open(NOMBRE_HOJA)
+            except gspread.exceptions.SpreadsheetNotFound:
+                archivos = gc.list_spreadsheet_files()
+                coincidencias = [f for f in archivos if "Respuestas de Quejas" in f["name"]]
+                if coincidencias:
+                    nombre_encontrado = coincidencias[0]["name"]
+                    print(f"[INFO] Abriendo hoja encontrada: '{nombre_encontrado}'")
+                    hoja_calculo = gc.open_by_key(coincidencias[0]["id"])
+                else:
+                    print(f"[ERROR] No se encontró ninguna hoja con el nombre '{NOMBRE_HOJA}'.")
+                    return None
+            return hoja_calculo.sheet1
+
+        # Modo computadora: inicio de sesión con el navegador (Práctica 1)
         gc = gspread.oauth(credentials_filename=ARCHIVO_CREDENCIALES)
         
         # Intentar abrir la hoja por su nombre exacto
@@ -76,7 +94,7 @@ def conectar_sheets():
 
 def analizar_con_gemini(comentario):
     """
-    Envía el comentario a Gemini 2.5 Flash para clasificar la categoría y detectar el sentimiento.
+    Envía el comentario a Gemini para clasificar la categoría y detectar el sentimiento.
     Retorna un diccionario con las claves 'clasificacion' y 'sentimiento'.
     """
     instruccion_sistema = (
@@ -139,18 +157,18 @@ def ejecutar_agente():
     hoja = conectar_sheets()
     if hoja is None:
         print("[AVISO] No se pudo conectar a Google Sheets. Se reintentará en el próximo ciclo.")
-        return
+        return False
 
     try:
         # Obtener todas las filas (lista de listas)
         todas_las_filas = hoja.get_all_values()
     except Exception as e:
         print(f"[ERROR] Error al leer los datos de la hoja: {e}")
-        return
+        return False
 
     if len(todas_las_filas) <= 1:
         print("[INFO] La hoja solo contiene encabezados o está vacía. No hay filas que procesar.")
-        return
+        return True
 
     # Omitimos la primera fila (índice 0, encabezados)
     filas_datos = todas_las_filas[1:]
@@ -199,6 +217,7 @@ def ejecutar_agente():
             print(f"[ERROR] Error inesperado procesando la fila {numero_fila_sheet}: {e}")
 
     print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Ciclo completado. Filas procesadas en este ciclo: {filas_procesadas}.")
+    return True
 
 
 # ==========================================
@@ -211,14 +230,14 @@ if __name__ == "__main__":
 
     # 1. Validar la API Key
     if not GEMINI_API_KEY or GEMINI_API_KEY == "TU_API_KEY_AQUI":
-        print("[ERROR] Debes configurar tu GEMINI_API_KEY dentro de agente_soporte.py antes de iniciar.")
+        print("[ERROR] Debes configurar tu GEMINI_API_KEY dentro de agente_soporte.py o en el archivo .env.")
         print("Obtén tu clave gratuita en: https://aistudio.google.com/app/api-keys")
         sys.exit(1)
 
-    # 2. Validar archivo de credenciales OAuth
-    if not os.path.exists(ARCHIVO_CREDENCIALES):
+    # Paso 1.4: Validar archivo de credenciales OAuth solo si no existe GOOGLE_TOKEN_JSON
+    if not os.getenv("GOOGLE_TOKEN_JSON") and not os.path.exists(ARCHIVO_CREDENCIALES):
         print(f"[ERROR] No se encontró el archivo '{ARCHIVO_CREDENCIALES}' en la carpeta del script.")
-        print("Descarga las credenciales OAuth 2.0 desde Google Cloud Console y colócalas aquí.")
+        print("Descarga las credenciales OAuth 2.0 desde Google Cloud Console y colócalas aquí, o configura GOOGLE_TOKEN_JSON.")
         sys.exit(1)
 
     # 3. Inicializar el cliente de Gemini
@@ -229,16 +248,20 @@ if __name__ == "__main__":
         print(f"[ERROR] No se pudo inicializar el cliente de Gemini: {e}")
         sys.exit(1)
 
-    # 4. Ejecutar inmediatamente la primera vez
+    # Paso 1.3: Modo "Una Vez" para GitHub Actions
+    if "--una-vez" in sys.argv:
+        print("\n[MODO] Ejecutando ciclo único (--una-vez)...")
+        exito = ejecutar_agente()
+        sys.exit(0 if exito else 1)
+
+    # Modo Continuo (Práctica 1)
     print(f"\n[INICIO] Ejecutando agente por primera vez...")
     ejecutar_agente()
 
-    # 5. Programar ejecuciones automáticas
     schedule.every(INTERVALO_MINUTOS).minutes.do(ejecutar_agente)
     print(f"\n[PROGRAMACIÓN] El agente revisará automáticamente la hoja cada {INTERVALO_MINUTOS} minutos.")
     print("Presiona Ctrl + C en cualquier momento para detener el agente.\n")
 
-    # 6. Bucle de ejecución
     try:
         while True:
             schedule.run_pending()
