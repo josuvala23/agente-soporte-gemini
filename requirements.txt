@@ -1,0 +1,4 @@
+gspread>=6.2.0
+google-auth>=2.30.0
+google-genai>=2.20.0
+schedule>=1.2.0
