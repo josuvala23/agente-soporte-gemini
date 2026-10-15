@@ -41,8 +41,13 @@ def conectar_sheets():
     try:
         # Paso 1.2: Iniciar sesión sin navegador si existe GOOGLE_TOKEN_JSON en el entorno
         token_env = os.getenv("GOOGLE_TOKEN_JSON")
-        if token_env:
-            info = json.loads(token_env)
+        if token_env and token_env.strip():
+            try:
+                info = json.loads(token_env)
+            except json.JSONDecodeError as err:
+                print(f"[ERROR] El secret GOOGLE_TOKEN_JSON no contiene un JSON válido: {err}")
+                print("Asegúrate de pegar todo el contenido de authorized_user.json en GitHub Secrets.")
+                return None
             scopes = [
                 "https://www.googleapis.com/auth/spreadsheets",
                 "https://www.googleapis.com/auth/drive"
