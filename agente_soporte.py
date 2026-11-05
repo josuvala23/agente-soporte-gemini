@@ -22,7 +22,7 @@ NOMBRE_HOJA = "Respuestas de Quejas (Base de Datos)"
 # Paso 1.1: Leer la clave desde la variable de entorno GEMINI_API_KEY
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "TU_API_KEY_AQUI")
 
-INTERVALO_MINUTOS = 15
+INTERVALO_MINUTOS = 1
 
 # Índices de columnas en Google Sheets (1-indexado para gspread)
 COL_CLASIFICACION = 4   # Columna D: Clasificación IA
